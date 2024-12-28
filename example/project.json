@@ -1,0 +1,8 @@
+{
+	"plugins": [
+		{
+			"path": "target/debug/example.dll",
+			"enabled": true
+		}
+	]
+}

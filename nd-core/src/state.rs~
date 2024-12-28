@@ -1,0 +1,80 @@
+use std::any::Any;
+
+use super::ApplicationEvent;
+use super::Context;
+
+pub type BoxedState = Box<dyn State>;
+
+pub enum Output {
+	Push(BoxedState),
+	Break,
+	Continue,
+	Replace(BoxedState),
+}
+
+pub trait State: Any + Send + Sync {
+	fn handle_app_event(&mut self, event: ApplicationEvent, context: &mut Context<'_>) {}
+	fn enter(&mut self, context: &mut Context<'_>) {}
+	fn handle_fixed_update(&mut self, context: &mut Context<'_>) -> Output {
+		Output::Continue
+	}
+	fn exit(self: Box<Self>, context: &mut Context<'_>) {}
+}
+
+impl StateMachine {
+	pub fn new(initial_state: BoxedState) -> Self {
+		Self {
+			stack: vec![initial_state],
+		}
+	}
+}
+
+pub struct StateMachine {
+	stack: Vec<BoxedState>,
+}
+
+impl State for StateMachine {
+	fn handle_app_event(&mut self, event: ApplicationEvent, context: &mut Context<'_>) {
+		if let Some(state) = self.stack.last_mut() {
+			state.handle_app_event(event, context);
+		}
+	}
+	fn enter(&mut self, context: &mut Context<'_>) {
+		if let Some(state) = self.stack.last_mut() {
+			state.enter(context);
+		}
+	}
+	fn handle_fixed_update(&mut self, context: &mut Context<'_>) -> Output {
+		if let Some(mut this) = self.stack.pop() {
+			match this.handle_fixed_update(context) {
+				Output::Break => {
+					this.exit(context);
+				}
+				Output::Push(mut new) => {
+					new.enter(context);
+
+					self.stack.extend([this, new]);
+				}
+				Output::Continue => {
+					self.stack.extend([this]);
+				}
+				Output::Replace(mut new) => {
+					this.exit(context);
+
+					new.enter(context);
+
+					self.stack.extend([new]);
+				}
+			}
+
+			Output::Continue
+		} else {
+			Output::Break
+		}
+	}
+	fn exit(mut self: Box<Self>, context: &mut Context<'_>) {
+		while let Some(mut state) = self.stack.pop() {
+			state.exit(context);
+		}
+	}
+}

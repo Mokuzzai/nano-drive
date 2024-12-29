@@ -1,7 +1,7 @@
-use crate::ApplicationEvent;
+use crate::client::ClientEvent;
 
 pub struct World {
-	pub app_events: EventWriter<ApplicationEvent>,
+	pub app_events: EventWriter<ClientEvent>,
 }
 
 impl World {

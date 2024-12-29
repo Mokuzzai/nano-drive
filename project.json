@@ -1,0 +1,13 @@
+{
+	"plugins": [
+		{
+			"path": "example.dll",
+			"enabled": true
+		}
+	],
+	"actions": {
+		"move": "AbsoluteAxis2",
+		"look": "VelocityAxis2",
+		"jump": "Absolute"
+	}
+}

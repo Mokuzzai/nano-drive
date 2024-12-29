@@ -1,10 +1,12 @@
 #![allow(unused)]
 
-use nd_core::engine;
-use nd_core::engine::EngineConfig;
-use nd_core::engine::EngineEvent;
-use nd_core::engine::EngineHandle;
-use nd_core::ApplicationEvent;
+mod input;
+
+use nd_engine::client::ClientEvent;
+use nd_engine::engine;
+use nd_engine::engine::EngineConfig;
+use nd_engine::engine::EngineEvent;
+use nd_engine::engine::EngineHandle;
 
 use std::env;
 use std::fs;
@@ -47,18 +49,16 @@ impl RenderServer {
 	}
 }
 
-struct Application {
+struct Client {
 	render_server: RenderServer,
-
-	application_config: ApplicationConfig,
 
 	engine: Option<EngineHandle>,
 
 	last_draw: Instant,
 }
 
-impl Application {
-	fn new(event_loop: &EventLoop, settings: ApplicationConfig) -> Self {
+impl Client {
+	fn new(event_loop: &EventLoop, settings: ClientConfig) -> Self {
 		Self {
 			render_server: {
 				let (window, display) = SimpleWindowBuilder::new().build(event_loop);
@@ -66,10 +66,9 @@ impl Application {
 				RenderServer { window, display }
 			},
 			engine: Some(EngineHandle::spawn(
-				&settings.engine_path,
-				settings.engine_config.clone(),
+				settings.engine_path,
+				settings.engine_config,
 			)),
-			application_config: settings,
 			last_draw: Instant::now(),
 		}
 	}
@@ -85,7 +84,7 @@ impl Application {
 	}
 }
 
-impl ApplicationHandler for Application {
+impl ApplicationHandler for Client {
 	fn resumed(&mut self, event_loop: &ActiveEventLoop) {}
 
 	fn window_event(
@@ -100,10 +99,7 @@ impl ApplicationHandler for Application {
 			WindowEvent::RedrawRequested => self.render_server.redraw(),
 			WindowEvent::CloseRequested => {
 				if let Some(engine) = self.engine.as_mut() {
-					let _ = engine
-						.app_sender
-						.send(ApplicationEvent::CloseRequested)
-						.unwrap();
+					engine.send(ClientEvent::CloseRequested);
 				}
 			}
 			_ => (),
@@ -112,20 +108,9 @@ impl ApplicationHandler for Application {
 
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		if let Some(engine) = self.engine.as_mut() {
-			match engine.process.try_wait() {
-				Ok(None) => (), // do nothing
-				Ok(Some(exit_code)) => {
-					println!("engine exited with code: {:?}", exit_code);
+			if let Some(event) = engine.try_recv() {
+				println!("client received: {:?}", event);
 
-					*engine = EngineHandle::spawn(
-						&self.application_config.engine_path,
-						self.application_config.engine_config.clone(),
-					);
-				}
-				Err(e) => panic!("{}", e),
-			}
-
-			if let Ok(event) = engine.engine_receiver.try_recv() {
 				self.handle_engine_event(event, event_loop);
 			}
 		} else {
@@ -152,37 +137,45 @@ impl ApplicationHandler for Application {
 	}
 }
 
-pub struct ApplicationConfig {
+#[derive(Parser)]
+pub struct LaunchOptions {
+	project_json_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct ClientConfig {
 	engine_path: PathBuf,
 	engine_config: EngineConfig,
 }
 
 fn main() {
+	let launch_options = LaunchOptions::parse();
+
 	let mut path = env::current_exe().unwrap();
 
 	let _ = path.pop();
 
-	let engine_path = path.join("nd-sim.exe");
+	let engine_path = path.join("nd-engine.exe");
 
-	let engine_config_path = path.join("project.json");
-
-	let settings = ApplicationConfig {
+	let application_config = ClientConfig {
 		engine_path,
-		engine_config: json::from_reader(fs::File::open(&engine_config_path).unwrap_or_else(
-			|error| {
+		engine_config: json::from_reader(
+			fs::File::open(&launch_options.project_json_path).unwrap_or_else(|error| {
 				panic!(
 					"could not open file: {}, reason: {}",
-					engine_config_path.display(),
+					launch_options.project_json_path.display(),
 					error
 				)
-			},
-		))
+			}),
+		)
 		.unwrap(),
 	};
 
+	println!("{:#?}", application_config);
+
 	let event_loop = EventLoop::builder().build().unwrap();
 
-	let mut app = Application::new(&event_loop, settings);
+	let mut app = Client::new(&event_loop, application_config);
 
 	event_loop.run_app(&mut app).unwrap();
 }

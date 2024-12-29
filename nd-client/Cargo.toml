@@ -1,0 +1,13 @@
+[package]
+name = "nd-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+assets_manager = { workspace = true }
+clap = { workspace = true }
+fxhash = { workspace = true }
+glium = { workspace = true }
+log = { workspace = true }
+nd-engine = { workspace = true }
+serde_json = { workspace = true }

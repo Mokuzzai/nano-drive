@@ -1,3 +1,21 @@
 [workspace]
 resolver = "2"
-members = [ "example", "nd-cli","nd-core", "nd-sim"]
+members = [ "example", "nd-client", "nd-engine", "nd-godot"]
+
+[workspace.dependencies]
+assets_manager = { version = "0.12.4", features = ["hot-reloading"] }
+clap = { version = "4.5.23", features = ["derive"] }
+crossbeam = "0.8.4"
+dlopen2 = "0.7.0"
+glium = "0.36.0"
+ipc-channel = "0.19.0"
+log = "0.4.22"
+nalgebra = "0.33.2"
+nd-engine = { path = "nd-engine" }
+notify = "7.0.0"
+serde = { version = "1.0.216", features = ["derive"] }
+serde_json = "1.0.134"
+tempfile = "3.14.0"
+thiserror = "2.0.9"
+tokio = { version = "1.42.0", features = ["rt", "rt-multi-thread"] }
+fxhash = "0.2.1"

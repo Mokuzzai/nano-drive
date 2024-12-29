@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum Value {
+pub enum Kind {
 	// Button
 	Absolute,
 
@@ -28,5 +28,16 @@ pub enum Value {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Actions {
 	#[serde(flatten)]
-	actions: FxHashMap<String, Value>,
+	actions: FxHashMap<String, Kind>,
+}
+
+impl Actions {
+	pub fn new() -> Self {
+		Self {
+			actions: FxHashMap::default(),
+		}
+	}
+	pub fn insert(&mut self, name: String, kind: Kind) -> Option<Kind> {
+		self.actions.insert(name, kind)
+	}
 }

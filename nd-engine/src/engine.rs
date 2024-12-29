@@ -14,6 +14,8 @@ use ipc_channel::ipc::IpcOneShotServer;
 use ipc_channel::ipc::IpcReceiver;
 use ipc_channel::ipc::IpcSender;
 use ipc_channel::ipc::TryRecvError;
+use rayon::ThreadPool;
+use rayon::ThreadPoolBuilder;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json as json;
@@ -24,15 +26,13 @@ fn bool_true() -> bool {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PluginConfig {
-	path: PathBuf,
-	#[serde(default = "bool_true")]
-	enabled: bool,
+	pub path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EngineConfig {
-	plugins: Vec<PluginConfig>,
-	actions: Actions,
+	pub plugins: Vec<PluginConfig>,
+	pub actions: Actions,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,6 +69,7 @@ impl EngineBuilder {
 #[non_exhaustive]
 pub enum EngineEvent {
 	Closed,
+	FixedUpdate,
 }
 
 pub struct Engine {
@@ -76,6 +77,7 @@ pub struct Engine {
 	app_receiver: IpcReceiver<ClientEvent>,
 	engine_sender: IpcSender<EngineEvent>,
 	world: World,
+	thread_pool: ThreadPool,
 }
 
 impl Engine {
@@ -89,6 +91,7 @@ impl Engine {
 			app_receiver,
 			engine_sender,
 			world: World::new(),
+			thread_pool: ThreadPoolBuilder::new().num_threads(16).build().unwrap(),
 		}
 	}
 
@@ -120,6 +123,8 @@ impl Engine {
 			}
 
 			last_fixed_update = Instant::now();
+
+			self.engine_sender.send(EngineEvent::FixedUpdate).unwrap();
 		}
 
 		self.engine_sender.send(EngineEvent::Closed).unwrap();

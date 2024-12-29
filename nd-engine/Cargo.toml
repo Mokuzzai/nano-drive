@@ -11,5 +11,5 @@ dlopen2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ipc-channel = { workspace = true }
-tokio = { workspace = true }
 fxhash = { workspace = true }
+rayon = "1.10.0"

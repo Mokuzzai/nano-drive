@@ -22,20 +22,8 @@ impl EngineHandle {
 		Gd::from_init_fn(|base| {
 			let engine_path = engine_path.to_string();
 
-			let engine_config = nd::engine::EngineConfig {
-				plugins: vec![],
-				actions: {
-					let mut actions = nd::action::Actions::new();
-
-					let _ = actions.insert("jump".to_string(), nd::action::Kind::Absolute);
-					let _ = actions.insert("move".to_string(), nd::action::Kind::AbsoluteAxis);
-
-					actions
-				},
-			};
-
 			Self {
-				handle: nd::engine::EngineHandle::spawn(engine_path.into(), engine_config),
+				handle: nd::engine::EngineHandle::spawn(engine_path.into()),
 				base,
 			}
 		})

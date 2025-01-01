@@ -4,7 +4,6 @@ mod input;
 
 use nd_engine::client::ClientEvent;
 use nd_engine::engine;
-use nd_engine::engine::EngineConfig;
 use nd_engine::engine::EngineEvent;
 use nd_engine::engine::EngineHandle;
 
@@ -16,11 +15,11 @@ use std::time::Duration;
 use std::time::Instant;
 
 use clap::Parser;
+use glium::Surface;
 use glium::backend::glutin::SimpleWindowBuilder;
 use glium::glutin::surface::WindowSurface;
 use glium::winit;
 use glium::winit::event::DeviceEvent;
-use glium::Surface;
 use serde_json as json;
 use winit::application::ApplicationHandler;
 use winit::event::DeviceId;
@@ -65,16 +64,11 @@ impl Client {
 
 				RenderServer { window, display }
 			},
-			engine: Some(EngineHandle::spawn(
-				settings.engine_path,
-				settings.engine_config,
-			)),
+			engine: Some(EngineHandle::spawn(settings.engine_path)),
 			last_draw: Instant::now(),
 		}
 	}
 	fn handle_engine_event(&mut self, event: EngineEvent, event_loop: &ActiveEventLoop) {
-		println!("EngineEvent::{:?}", event);
-
 		match event {
 			EngineEvent::Closed => {
 				let _ = self.engine.take();
@@ -109,8 +103,6 @@ impl ApplicationHandler for Client {
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		if let Some(engine) = self.engine.as_mut() {
 			if let Some(event) = engine.try_recv() {
-				println!("client received: {:?}", event);
-
 				self.handle_engine_event(event, event_loop);
 			}
 		} else {
@@ -139,36 +131,19 @@ impl ApplicationHandler for Client {
 
 #[derive(Parser)]
 pub struct LaunchOptions {
-	project_json_path: PathBuf,
+	engine_path: PathBuf,
 }
 
 #[derive(Debug)]
 pub struct ClientConfig {
 	engine_path: PathBuf,
-	engine_config: EngineConfig,
 }
 
 fn main() {
 	let launch_options = LaunchOptions::parse();
 
-	let mut path = env::current_exe().unwrap();
-
-	let _ = path.pop();
-
-	let engine_path = path.join("nd-engine.exe");
-
 	let application_config = ClientConfig {
-		engine_path,
-		engine_config: json::from_reader(
-			fs::File::open(&launch_options.project_json_path).unwrap_or_else(|error| {
-				panic!(
-					"could not open file: {}, reason: {}",
-					launch_options.project_json_path.display(),
-					error
-				)
-			}),
-		)
-		.unwrap(),
+		engine_path: launch_options.engine_path,
 	};
 
 	println!("{:#?}", application_config);

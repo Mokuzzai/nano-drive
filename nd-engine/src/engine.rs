@@ -1,5 +1,6 @@
-use crate::action::Actions;
 use crate::client::ClientEvent;
+use crate::system::System;
+use crate::system::Systems;
 use crate::world::World;
 
 use std::path::Path;
@@ -20,31 +21,14 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json as json;
 
-fn bool_true() -> bool {
-	true
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginConfig {
-	pub path: PathBuf,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EngineConfig {
-	pub plugins: Vec<PluginConfig>,
-	pub actions: Actions,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EngineBuilder {
 	pipe: String,
-	engine_config: EngineConfig,
 }
 
 #[derive(Debug, Serialize)]
 pub struct EngineBuilderRef<'a> {
 	pipe: &'a str,
-	engine_config: &'a EngineConfig,
 }
 
 impl EngineBuilder {
@@ -61,7 +45,7 @@ impl EngineBuilder {
 			})
 			.unwrap();
 
-		Engine::new(self.engine_config, engine_sender, app_receiver)
+		Engine::new(engine_sender, app_receiver)
 	}
 }
 
@@ -69,53 +53,65 @@ impl EngineBuilder {
 #[non_exhaustive]
 pub enum EngineEvent {
 	Closed,
-	FixedUpdate,
+	BeginFixedUpdate(u64),
+	EndFixedUpdate(u64),
 }
 
 pub struct Engine {
-	engine_config: EngineConfig,
 	app_receiver: IpcReceiver<ClientEvent>,
 	engine_sender: IpcSender<EngineEvent>,
 	world: World,
 	thread_pool: ThreadPool,
+	startup_systems: Systems,
+	systems: Systems,
+	ticks_per_second: u32,
 }
 
 impl Engine {
 	pub fn new(
-		engine_config: EngineConfig,
 		engine_sender: IpcSender<EngineEvent>,
 		app_receiver: IpcReceiver<ClientEvent>,
 	) -> Self {
 		Self {
-			engine_config,
 			app_receiver,
 			engine_sender,
 			world: World::new(),
 			thread_pool: ThreadPoolBuilder::new().num_threads(16).build().unwrap(),
+			startup_systems: Systems::new(),
+			systems: Systems::new(),
+			ticks_per_second: 120,
 		}
 	}
-
-	pub fn run(mut self) {
+	pub fn add_startup_system(&mut self, system: impl System) -> &mut Self {
+		self.startup_systems.add(system);
+		self
+	}
+	pub fn add_system(&mut self, system: impl System) -> &mut Self {
+		self.systems.add(system);
+		self
+	}
+	pub fn run(&mut self) {
 		let mut running = true;
 		let mut last_fixed_update = Instant::now();
+		let mut tick = 0;
 
-		let wait_time = Duration::from_secs(1) / 60;
+		let wait_time = Duration::from_secs(1) / self.ticks_per_second;
 
 		println!("Engine start");
+
+		self.world
+			.write_swap_sync(&self.thread_pool, &mut self.startup_systems);
+
+		println!("ran startup systems");
 
 		while running {
 			loop {
 				let timeout = wait_time.saturating_sub(last_fixed_update.elapsed());
 
 				match self.app_receiver.try_recv_timeout(timeout) {
-					Ok(event) => {
-						println!("engine received: {:?}", event);
-
-						if matches!(event, ClientEvent::CloseRequested) {
-							running = false
-						}
-
-						self.world.app_events.push(event)
+					Ok(ClientEvent::CloseRequested) => running = false,
+					Ok(_event) => {
+						// self.world.app_events.push(event)
 					}
 					Err(TryRecvError::Empty) => break,
 					Err(error) => panic!("error while reciving application event: {}", error),
@@ -124,7 +120,18 @@ impl Engine {
 
 			last_fixed_update = Instant::now();
 
-			self.engine_sender.send(EngineEvent::FixedUpdate).unwrap();
+			self.engine_sender
+				.send(EngineEvent::BeginFixedUpdate(tick))
+				.unwrap();
+
+			self.world
+				.write_swap_sync(&self.thread_pool, &mut self.systems);
+
+			self.engine_sender
+				.send(EngineEvent::EndFixedUpdate(tick))
+				.unwrap();
+
+			tick += 1;
 		}
 
 		self.engine_sender.send(EngineEvent::Closed).unwrap();
@@ -146,19 +153,25 @@ struct RawEngineHandle {
 }
 
 impl RawEngineHandle {
-	fn spawn(engine_path: &Path, engine_config: &EngineConfig) -> Self {
+	fn spawn(engine_path: &Path) -> Self {
 		let (sender, name) = IpcOneShotServer::new().unwrap();
 
-		let builder = EngineBuilderRef {
-			pipe: &name,
-			engine_config,
-		};
+		let builder = EngineBuilderRef { pipe: &name };
 
 		println!("spawning engine with: {:#?}", builder);
 
 		let builder = json::to_string(&builder).unwrap();
 
-		let process = Command::new(engine_path).arg(&builder).spawn().unwrap();
+		let process = Command::new(engine_path)
+			.arg(&builder)
+			.spawn()
+			.unwrap_or_else(|error| {
+				panic!(
+					"error while running command: {}, reason: {}",
+					engine_path.display(),
+					error
+				);
+			});
 
 		let Connect {
 			app_sender,
@@ -175,19 +188,14 @@ impl RawEngineHandle {
 
 pub struct EngineHandle {
 	engine_path: PathBuf,
-	engine_config: EngineConfig,
 	raw: RawEngineHandle,
 }
 
 impl EngineHandle {
-	pub fn spawn(engine_path: PathBuf, engine_config: EngineConfig) -> Self {
-		let raw = RawEngineHandle::spawn(&engine_path, &engine_config);
+	pub fn spawn(engine_path: PathBuf) -> Self {
+		let raw = RawEngineHandle::spawn(&engine_path);
 
-		Self {
-			engine_path,
-			engine_config,
-			raw,
-		}
+		Self { engine_path, raw }
 	}
 
 	fn rebuild_if_needed(&mut self) {
@@ -198,13 +206,11 @@ impl EngineHandle {
 		if let Some(exit_code) = did_exit {
 			println!("child exited with code: {:?}", exit_code.code());
 
-			self.raw = RawEngineHandle::spawn(&self.engine_path, &self.engine_config);
+			self.raw = RawEngineHandle::spawn(&self.engine_path);
 		}
 	}
 
 	pub fn send(&mut self, client_event: ClientEvent) {
-		println!("client sent: {:?}", client_event);
-
 		self.rebuild_if_needed();
 
 		self.raw

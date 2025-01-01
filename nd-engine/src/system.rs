@@ -1,72 +1,36 @@
-use std::sync::LazyLock;
+use crate::world::Commands;
+use crate::world::RawWorld;
 
-use crate::world::World;
+use std::any::Any;
 
-use crossbeam::channel;
-use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
-
-use rayon::ThreadPool;
-
-pub trait System: 'static + Send + Sync {
-	fn run(&mut self, world: &World, commands: &mut Commands);
+pub trait System: Any + Send + Sync {
+	fn run(&mut self, world: &RawWorld, commands: &mut Commands);
 }
 
-pub trait Command: 'static + Send + Sync {
-	fn run(self: Box<Self>, world: &mut World);
-}
+pub struct FromFn<F>(pub F);
 
-type BoxedSystem = Box<dyn System>;
-type BoxedCommand = Box<dyn Command>;
+impl<F: Any + Send + Sync + FnMut(&RawWorld, &mut Commands)> System for FromFn<F> {
+	fn run(&mut self, world: &RawWorld, commands: &mut Commands) {
+		let Self(callback) = self;
 
-pub struct Commands<'a> {
-	sender: &'a Sender<BoxedCommand>,
-}
-
-impl<'a> Commands<'a> {
-	fn add(&mut self, command: impl Command) {
-		self.sender.send(Box::new(command)).unwrap()
+		callback(world, commands)
 	}
 }
 
-struct Systems {
-	systems: Vec<BoxedSystem>,
-}
-
-struct Channels {
-	receiver: Receiver<BoxedCommand>,
-
-	sender: Sender<BoxedCommand>,
-}
-
-impl Channels {
-	fn new() -> Self {
-		let (sender, receiver) = channel::unbounded();
-
-		Self { receiver, sender }
-	}
-}
-
-static CHANNEL: LazyLock<Channels> = LazyLock::new(Channels::new);
-
-thread_local! {
-	static SENDER: Sender<BoxedCommand> = CHANNEL.sender.clone();
+pub struct Systems {
+	systems: Vec<Box<dyn System>>,
 }
 
 impl Systems {
-	fn run(&mut self, thread_pool: &ThreadPool, world: &World) {
-		assert!(CHANNEL.receiver.is_empty());
-
-		thread_pool.scope(|scope| {
-			for system in self.systems.iter_mut() {
-				scope.spawn(|_| {
-					SENDER.with(|sender| {
-						assert!(sender.is_empty());
-
-						system.run(world, &mut Commands { sender });
-					})
-				})
-			}
-		})
+	pub fn new() -> Self {
+		Self {
+			systems: Vec::new(),
+		}
+	}
+	pub fn add(&mut self, system: impl System) {
+		self.systems.push(Box::new(system))
+	}
+	pub fn iter_mut(&mut self) -> impl Send + Sync + Iterator<Item = &mut dyn System> {
+		self.systems.iter_mut().map(|x| &mut **x)
 	}
 }
